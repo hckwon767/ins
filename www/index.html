@@ -1860,7 +1860,7 @@ aud.addEventListener('stalled',()=>{setOnAir(false);clearConnectTimer();if(!isSk
 /* ── visibility ── */
 let _wasPlaying=false;
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='hidden'){_wasPlaying=!aud.paused;clearConnectTimer();clearAutoSkip();stopNowPlaying()}
+  if(document.visibilityState==='hidden'){_wasPlaying=!aud.paused;clearConnectTimer();}
   else if(_wasPlaying){
     if(aud.paused||aud.readyState<2){
       const s=aud.src;
