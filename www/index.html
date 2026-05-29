@@ -1759,9 +1759,11 @@ let activeId=null, isMuted=false;
 let activeExtraIdx=null, extraFiltered=[], extraCurrentTag='ALL', extraChannels=[];
 let npTimer=null, lastTrackStr='', currentArtUrl=null, _artImgs=[];
 let isSkipping=false;
-let autoSkipTimer=null, connectTimer=null;
+let autoSkipTimer=null, connectTimer=null, reconnectTimer=null;
 const skippedIds=new Set(), skippedExtraUrls=new Set();
 const AUTO_SKIP_SEC=60, CONNECT_TIMEOUT_SEC=30;
+const RECONNECT_INTERVAL=3*60*60*1000; /* 3시간마다 선제적 재연결 */
+const RETRY_DELAYS=[3000,8000,15000];  /* backoff 재시도 딜레이 */
 
 /* ── helpers ── */
 const isMobile=()=>window.innerWidth<=680;
@@ -1788,6 +1790,23 @@ function clearConnectTimer(){if(connectTimer){clearTimeout(connectTimer);connect
 /* autoSkip은 connectTimer 보조용으로만 유지 — 정상 재생 중에는 호출하지 않음 */
 function startAutoSkip(){clearAutoSkip()}
 function clearAutoSkip(){if(autoSkipTimer){clearTimeout(autoSkipTimer);autoSkipTimer=null}}
+
+/* ── 주기적 재연결 (서버 장시간 연결 끊김 선제 대응) ── */
+function startReconnectCycle(){
+  clearReconnectCycle();
+  reconnectTimer=setInterval(()=>{
+    if(aud.paused)return;
+    const s=aud.src;
+    if(!s)return;
+    console.log('[RECONNECT] 선제적 재연결 실행');
+    aud.src=s;
+    aud.play().catch(()=>{});
+    startConnectTimer();
+  },RECONNECT_INTERVAL);
+}
+function clearReconnectCycle(){
+  if(reconnectTimer){clearInterval(reconnectTimer);reconnectTimer=null}
+}
 
 /* ── audio events ── */
 let waitingTimer=null;
@@ -1824,47 +1843,47 @@ aud.addEventListener('pause',()=>{
 });
 
 aud.addEventListener('error',()=>{
-
   clearTimeout(waitingTimer);waitingTimer=null;
   setOnAir(false);
   clearConnectTimer();
-
   if(isSkipping)return;
 
   if(retryCount < MAX_RETRIES){
-
+    const delay=RETRY_DELAYS[retryCount]||15000;
     retryCount++;
-
-    console.log('stream retry', retryCount);
-
+    console.log('[ERROR] stream retry',retryCount,'delay',delay);
     setTimeout(()=>{
-
-      aud.load();
-
+      aud.src=aud.src; /* src 재설정으로 새 연결 강제 */
       aud.play().catch(()=>{});
-
       startConnectTimer();
-
-    }, RETRY_DELAY);
-
+    },delay);
     return;
   }
 
   retryCount=0;
-
   playNextChannel(true);
-
 });
 aud.addEventListener('stalled',()=>{setOnAir(false);clearConnectTimer();if(!isSkipping)startConnectTimer()});
 
 /* ── visibility ── */
 let _wasPlaying=false;
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='hidden'){_wasPlaying=!aud.paused;clearConnectTimer();clearAutoSkip();stopNowPlaying()}
-  else if(_wasPlaying){
+  if(document.visibilityState==='hidden'){
+    _wasPlaying=!aud.paused;
+    /* 곡 정보 폴링만 중단 — 에러 복구 타이머(connectTimer)는 유지 */
+    stopNowPlaying();
+  } else if(_wasPlaying){
     if(aud.paused||aud.readyState<2){
       const s=aud.src;
-      if(s){aud.src=s;aud.play().catch(()=>{});startConnectTimer();}
+      if(s){
+        aud.src=s;
+        aud.play().catch(()=>{});
+        /* 5초 유예 후 connectTimer 시작 — 즉시 스킵 방지 */
+        setTimeout(()=>{
+          if(!aud.paused&&aud.readyState>=2)return;
+          startConnectTimer();
+        },5000);
+      }
       startNowPlaying();
     } else {
       startAutoSkip();
@@ -2136,12 +2155,13 @@ function playChannel(ch){
   setPlayIcon(true);setOnAir(false);
   renderDtList();renderMobCards();
   startNowPlaying();
+  startReconnectCycle();
 }
 
 function togglePlay(){
   if(!activeId&&activeExtraIdx===null)return;
-  if(aud.paused){aud.play().catch(()=>{});setPlayIcon(true);startNowPlaying();startAutoSkip()}
-  else{aud.pause();setPlayIcon(false);stopNowPlaying()}
+  if(aud.paused){aud.play().catch(()=>{});setPlayIcon(true);startNowPlaying();startAutoSkip();startReconnectCycle()}
+  else{aud.pause();setPlayIcon(false);stopNowPlaying();clearReconnectCycle()}
 }
 
 /* ── 앨범아트 터치 오버레이 플래시 (모바일) ──
@@ -2571,6 +2591,7 @@ function playExtraChannel(ch){
   })();
 
   startNowPlaying();
+  startReconnectCycle();
 }
 
 /* ── now playing — 원본 로직 그대로 ── */
