@@ -5,10 +5,6 @@
   "bundledWebRuntime": false,
   "android": {
     "buildOptions": {
-      "keystorePath": "instation.keystore",
-      "keystorePassword": "",
-      "keystoreAlias": "instation",
-      "keystoreAliasPassword": "",
       "releaseType": "APK"
     }
   },
@@ -16,21 +12,11 @@
     "SplashScreen": {
       "launchShowDuration": 1500,
       "backgroundColor": "#000000",
-      "androidSplashResourceName": "splash",
       "showSpinner": false
     },
     "StatusBar": {
       "style": "Dark",
       "backgroundColor": "#000000"
-    },
-    "BackgroundMode": {
-      "title": "INSTATION",
-      "text": "라디오 스트리밍 중",
-      "icon": "ic_notification",
-      "color": "#FF375F",
-      "resume": true,
-      "hidden": false,
-      "bigText": false
     }
   },
   "server": {
