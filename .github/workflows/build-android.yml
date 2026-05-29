@@ -27,8 +27,6 @@ concurrency:
 env:
   NODE_VERSION: '20'
   JAVA_VERSION: '17'
-  # Capacitor CLI 및 Android Gradle 캐시 키
-  CAP_CACHE_KEY: cap-v6-${{ hashFiles('package-lock.json') }}
 
 jobs:
   build:
