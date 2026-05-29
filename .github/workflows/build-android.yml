@@ -44,7 +44,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
 
       # ── 3. Java 17 설정 (Gradle 8 요구) ───────────────────
       - name: Setup Java ${{ env.JAVA_VERSION }}
@@ -59,7 +58,7 @@ jobs:
 
       # ── 5. npm 의존성 설치 ─────────────────────────────────
       - name: Install npm dependencies
-        run: npm ci
+        run: npm install
 
       # ── 6. Capacitor Android 플랫폼 추가 (최초 1회) ────────
       #    android/ 디렉터리가 없을 때만 실행
