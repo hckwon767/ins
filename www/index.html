@@ -1759,11 +1759,9 @@ let activeId=null, isMuted=false;
 let activeExtraIdx=null, extraFiltered=[], extraCurrentTag='ALL', extraChannels=[];
 let npTimer=null, lastTrackStr='', currentArtUrl=null, _artImgs=[];
 let isSkipping=false;
-let autoSkipTimer=null, connectTimer=null, reconnectTimer=null;
+let autoSkipTimer=null, connectTimer=null;
 const skippedIds=new Set(), skippedExtraUrls=new Set();
 const AUTO_SKIP_SEC=60, CONNECT_TIMEOUT_SEC=30;
-const RECONNECT_INTERVAL=3*60*60*1000; /* 3시간마다 선제적 재연결 */
-const RETRY_DELAYS=[3000,8000,15000];  /* backoff 재시도 딜레이 */
 
 /* ── helpers ── */
 const isMobile=()=>window.innerWidth<=680;
@@ -1790,23 +1788,6 @@ function clearConnectTimer(){if(connectTimer){clearTimeout(connectTimer);connect
 /* autoSkip은 connectTimer 보조용으로만 유지 — 정상 재생 중에는 호출하지 않음 */
 function startAutoSkip(){clearAutoSkip()}
 function clearAutoSkip(){if(autoSkipTimer){clearTimeout(autoSkipTimer);autoSkipTimer=null}}
-
-/* ── 주기적 재연결 (서버 장시간 연결 끊김 선제 대응) ── */
-function startReconnectCycle(){
-  clearReconnectCycle();
-  reconnectTimer=setInterval(()=>{
-    if(aud.paused)return;
-    const s=aud.src;
-    if(!s)return;
-    console.log('[RECONNECT] 선제적 재연결 실행');
-    aud.src=s;
-    aud.play().catch(()=>{});
-    startConnectTimer();
-  },RECONNECT_INTERVAL);
-}
-function clearReconnectCycle(){
-  if(reconnectTimer){clearInterval(reconnectTimer);reconnectTimer=null}
-}
 
 /* ── audio events ── */
 let waitingTimer=null;
@@ -1843,47 +1824,47 @@ aud.addEventListener('pause',()=>{
 });
 
 aud.addEventListener('error',()=>{
+
   clearTimeout(waitingTimer);waitingTimer=null;
   setOnAir(false);
   clearConnectTimer();
+
   if(isSkipping)return;
 
   if(retryCount < MAX_RETRIES){
-    const delay=RETRY_DELAYS[retryCount]||15000;
+
     retryCount++;
-    console.log('[ERROR] stream retry',retryCount,'delay',delay);
+
+    console.log('stream retry', retryCount);
+
     setTimeout(()=>{
-      aud.src=aud.src; /* src 재설정으로 새 연결 강제 */
+
+      aud.load();
+
       aud.play().catch(()=>{});
+
       startConnectTimer();
-    },delay);
+
+    }, RETRY_DELAY);
+
     return;
   }
 
   retryCount=0;
+
   playNextChannel(true);
+
 });
 aud.addEventListener('stalled',()=>{setOnAir(false);clearConnectTimer();if(!isSkipping)startConnectTimer()});
 
 /* ── visibility ── */
 let _wasPlaying=false;
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='hidden'){
-    _wasPlaying=!aud.paused;
-    /* 곡 정보 폴링만 중단 — 에러 복구 타이머(connectTimer)는 유지 */
-    stopNowPlaying();
-  } else if(_wasPlaying){
+  if(document.visibilityState==='hidden'){_wasPlaying=!aud.paused;clearConnectTimer();clearAutoSkip();stopNowPlaying()}
+  else if(_wasPlaying){
     if(aud.paused||aud.readyState<2){
       const s=aud.src;
-      if(s){
-        aud.src=s;
-        aud.play().catch(()=>{});
-        /* 5초 유예 후 connectTimer 시작 — 즉시 스킵 방지 */
-        setTimeout(()=>{
-          if(!aud.paused&&aud.readyState>=2)return;
-          startConnectTimer();
-        },5000);
-      }
+      if(s){aud.src=s;aud.play().catch(()=>{});startConnectTimer();}
       startNowPlaying();
     } else {
       startAutoSkip();
@@ -2155,13 +2136,12 @@ function playChannel(ch){
   setPlayIcon(true);setOnAir(false);
   renderDtList();renderMobCards();
   startNowPlaying();
-  startReconnectCycle();
 }
 
 function togglePlay(){
   if(!activeId&&activeExtraIdx===null)return;
-  if(aud.paused){aud.play().catch(()=>{});setPlayIcon(true);startNowPlaying();startAutoSkip();startReconnectCycle()}
-  else{aud.pause();setPlayIcon(false);stopNowPlaying();clearReconnectCycle()}
+  if(aud.paused){aud.play().catch(()=>{});setPlayIcon(true);startNowPlaying();startAutoSkip()}
+  else{aud.pause();setPlayIcon(false);stopNowPlaying()}
 }
 
 /* ── 앨범아트 터치 오버레이 플래시 (모바일) ──
@@ -2591,7 +2571,6 @@ function playExtraChannel(ch){
   })();
 
   startNowPlaying();
-  startReconnectCycle();
 }
 
 /* ── now playing — 원본 로직 그대로 ── */
@@ -2817,6 +2796,109 @@ document.getElementById('mobChannels').style.display='block';
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{scope:'./'}).catch(()=>{}));
 }
+</script>
+
+<script>
+// ── Capacitor 백그라운드 오디오 유지 ──────────────────────────
+// Android WebView는 화면이 꺼지면 JS 실행을 멈추고 오디오를 끊음.
+// 아래 방법들을 조합해서 백그라운드 재생을 유지함.
+
+(function() {
+  // 1) Wake Lock API: 화면 꺼짐 방지 (지원 기기만)
+  let wakeLock = null;
+  async function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLock = await navigator.wakeLock.request('screen');
+      }
+    } catch(e) {}
+  }
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') {
+      await requestWakeLock();
+    }
+  });
+  requestWakeLock();
+
+  // 2) MediaSession API: OS에 "재생 중인 미디어" 등록
+  //    → Android가 백그라운드에서도 오디오를 유지함
+  function registerMediaSession(title, artist, artUrl) {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title:  title  || 'INSTATION',
+      artist: artist || '',
+      artwork: artUrl ? [
+        { src: artUrl, sizes: '512x512', type: 'image/jpeg' }
+      ] : []
+    });
+    // 재생 컨트롤 핸들러 (잠금화면 버튼 대응)
+    const aud = document.getElementById('aud');
+    if (aud) {
+      navigator.mediaSession.setActionHandler('play',  () => { aud.play();  updateMediaSessionState(); });
+      navigator.mediaSession.setActionHandler('pause', () => { aud.pause(); updateMediaSessionState(); });
+      navigator.mediaSession.setActionHandler('stop',  () => { aud.pause(); updateMediaSessionState(); });
+    }
+  }
+
+  function updateMediaSessionState() {
+    if (!('mediaSession' in navigator)) return;
+    const aud = document.getElementById('aud');
+    if (!aud) return;
+    navigator.mediaSession.playbackState = aud.paused ? 'paused' : 'playing';
+  }
+
+  // 3) audio 엘리먼트에 이벤트 연결 (DOM 로딩 후 실행)
+  document.addEventListener('DOMContentLoaded', () => {
+    const aud = document.getElementById('aud');
+    if (!aud) return;
+
+    aud.addEventListener('play',  () => {
+      updateMediaSessionState();
+      registerMediaSession(
+        aud.dataset.title  || 'INSTATION',
+        aud.dataset.artist || '',
+        aud.dataset.artUrl || ''
+      );
+    });
+    aud.addEventListener('pause', updateMediaSessionState);
+
+    // 4) 페이지가 백그라운드로 갈 때 재생 중이면 강제 유지
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && !aud.paused) {
+        // 재생 중이면 아무것도 하지 않음 (pause 호출 금지)
+        aud.play().catch(() => {});
+      }
+    });
+
+    // 5) 1초 간격 keepalive: Android WebView JS 스로틀링 방지
+    setInterval(() => {
+      if (!aud.paused && aud.readyState < 3) {
+        // stalled 상태면 재시작
+        const src = aud.src;
+        aud.src = src;
+        aud.play().catch(() => {});
+      }
+    }, 1000);
+  });
+
+  // 6) NowPlaying 업데이트 시 MediaSession 메타데이터 갱신
+  //    기존 코드의 updateNowPlayingUI 함수를 감싸서 실행
+  window.addEventListener('load', () => {
+    const origUpdate = window.updateNowPlayingUI;
+    if (typeof origUpdate === 'function') {
+      window.updateNowPlayingUI = function(artist, title, artUrl) {
+        origUpdate.apply(this, arguments);
+        registerMediaSession(title, artist, artUrl);
+        const aud = document.getElementById('aud');
+        if (aud) {
+          aud.dataset.title  = title  || '';
+          aud.dataset.artist = artist || '';
+          aud.dataset.artUrl = artUrl || '';
+        }
+      };
+    }
+  });
+})();
 </script>
 </body>
 </html>
