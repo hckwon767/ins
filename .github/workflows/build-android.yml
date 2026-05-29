@@ -1,25 +1,10 @@
 name: Build INSTATION Android APK
 
-# ──────────────────────────────────────────────────────────────
-#  트리거:
-#    - main 브랜치 push
-#    - v* 태그 push (예: v1.0.0 → 릴리즈 APK + GitHub Release 자동 생성)
-#    - 수동 실행 (workflow_dispatch)
-# ──────────────────────────────────────────────────────────────
 on:
   push:
     branches: [ main ]
-    tags:     [ 'v*' ]
   workflow_dispatch:
-    inputs:
-      build_type:
-        description: 'Build type (debug / release)'
-        required: true
-        default: 'debug'
-        type: choice
-        options: [ debug, release ]
 
-# 동일 브랜치의 이전 빌드를 자동 취소
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -30,58 +15,45 @@ env:
 
 jobs:
   build:
-    name: Build APK (${{ github.event.inputs.build_type || (startsWith(github.ref, 'refs/tags/') && 'release' || 'debug') }})
+    name: Build Debug APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      # ── 1. 소스 체크아웃 ───────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Node.js 설정 ────────────────────────────────────
-      - name: Setup Node.js ${{ env.NODE_VERSION }}
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # ── 3. Java 17 설정 (Gradle 8 요구) ───────────────────
-      - name: Setup Java ${{ env.JAVA_VERSION }}
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
 
-      # ── 4. Android SDK 설정 ────────────────────────────────
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # ── 5. npm 의존성 설치 ─────────────────────────────────
       - name: Install npm dependencies
         run: npm install
 
-      # ── 6. Capacitor Android 플랫폼 추가 (최초 1회) ────────
-      #    android/ 디렉터리가 없을 때만 실행
       - name: Add Capacitor Android platform
         run: |
           if [ ! -d "android" ]; then
             npx cap add android
-            echo "✅ Android platform added"
-          else
-            echo "⏭️  android/ already exists, skipping add"
           fi
 
-      # ── 7. www → android WebView 동기화 ────────────────────
       - name: Capacitor sync
         run: npx cap sync android
 
-      # ── 8. Android 패치 적용 (Manifest, 테마, 보안 설정 등) ─
       - name: Apply Android patches
         run: |
           chmod +x patch-android.sh
           ./patch-android.sh
 
-      # ── 9. Gradle 캐시 ─────────────────────────────────────
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -92,76 +64,13 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      # ── 10-A. DEBUG 빌드 ────────────────────────────────────
       - name: Build Debug APK
-        if: ${{ !startsWith(github.ref, 'refs/tags/') && github.event.inputs.build_type != 'release' }}
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: ./gradlew assembleDebug --no-daemon
 
-      # ── 10-B. RELEASE 빌드 (태그 push 또는 수동 release 선택) ─
-      - name: Decode keystore
-        if: ${{ startsWith(github.ref, 'refs/tags/') || github.event.inputs.build_type == 'release' }}
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/instation.keystore
-        # Secrets 설정 방법 → README 참고
-
-      - name: Build Release APK
-        if: ${{ startsWith(github.ref, 'refs/tags/') || github.event.inputs.build_type == 'release' }}
-        working-directory: android
-        env:
-          KEYSTORE_PASSWORD:       ${{ secrets.KEYSTORE_PASSWORD }}
-          KEYSTORE_ALIAS:          ${{ secrets.KEYSTORE_ALIAS }}
-          KEYSTORE_ALIAS_PASSWORD: ${{ secrets.KEYSTORE_ALIAS_PASSWORD }}
-        run: |
-          ./gradlew assembleRelease --no-daemon \
-            -Pandroid.injected.signing.store.file=instation.keystore \
-            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
-            -Pandroid.injected.signing.key.alias="$KEYSTORE_ALIAS" \
-            -Pandroid.injected.signing.key.password="$KEYSTORE_ALIAS_PASSWORD"
-
-      # ── 11. APK 경로 통합 변수 설정 ────────────────────────
-      - name: Set APK path
-        id: apk
-        run: |
-          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
-            echo "path=android/app/build/outputs/apk/release/app-release.apk" >> $GITHUB_OUTPUT
-            echo "name=instation-release.apk" >> $GITHUB_OUTPUT
-          else
-            echo "path=android/app/build/outputs/apk/debug/app-debug.apk" >> $GITHUB_OUTPUT
-            echo "name=instation-debug.apk" >> $GITHUB_OUTPUT
-          fi
-
-      # ── 12. APK 아티팩트 업로드 ─────────────────────────────
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.apk.outputs.name }}
-          path: ${{ steps.apk.outputs.path }}
+          name: instation-debug.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
-
-      # ── 13. GitHub Release 생성 (태그 push 시에만) ─────────
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ steps.apk.outputs.path }}
-          name: "INSTATION ${{ github.ref_name }}"
-          body: |
-            ## INSTATION ${{ github.ref_name }}
-
-            ### 설치 방법
-            1. `instation-release.apk` 다운로드
-            2. Android 설정 → 알 수 없는 앱 설치 허용
-            3. APK 실행 후 설치
-
-            ### 변경 사항
-            ${{ github.event.head_commit.message }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ── 14. 키스토어 파일 정리 (보안) ──────────────────────
-      - name: Clean up keystore
-        if: always()
-        run: rm -f android/app/instation.keystore
