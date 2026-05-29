@@ -1,20 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  android-patch/network_security_config.xml
-  → android/app/src/main/res/xml/network_security_config.xml 로 복사됨
-
-  inlive.co.kr 스트리밍 서버 및 allorigins CORS 프록시에 대한
-  네트워크 보안 설정.
-  모두 HTTPS 이므로 cleartext 예외는 불필요.
--->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-
-    <!-- 스트리밍 서버: HTTPS 강제, 인증서 핀닝 없음 -->
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">inlive.co.kr</domain>
         <domain includeSubdomains="true">cdn.inlive.co.kr</domain>
