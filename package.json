@@ -1,0 +1,22 @@
+{
+  "name": "instation",
+  "version": "1.0.0",
+  "description": "INSTATION Radio Player",
+  "private": true,
+  "scripts": {
+    "build": "echo 'Static HTML — no build step'",
+    "cap:sync": "npx cap sync android",
+    "cap:open": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/app": "^6.0.0",
+    "@capacitor/status-bar": "^6.0.0",
+    "@capacitor/splash-screen": "^6.0.0",
+    "@capacitor-community/background-mode": "^0.3.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.0.0"
+  }
+}

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  android-patch/styles.xml
+  → android/app/src/main/res/values/styles.xml 로 복사됨
+  HTML :root { --bg:#000; --accent:#ff375f } 대응 다크 테마
+-->
+<resources>
+
+    <!-- 런치 테마: 스플래시 표시 중 상태바/네비바 검정 -->
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="android:background">@android:color/black</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <!-- 앱 기본 테마 -->
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">#FF375F</item>
+        <item name="colorPrimaryDark">#000000</item>
+        <item name="colorAccent">#FF375F</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <!-- WebView 배경 검정 유지 -->
+        <item name="android:windowIsTranslucent">false</item>
+    </style>
+
+</resources>
