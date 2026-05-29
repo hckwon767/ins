@@ -20,13 +20,27 @@ mkdir -p "$ANDROID_RES/xml"
 cp android-patch/network_security_config.xml "$ANDROID_RES/xml/network_security_config.xml"
 echo "  network_security_config.xml"
 
-# 4. MainActivity.java (WebView 백그라운드 일시정지 방지)
-MAIN_DIR=$(find android/app/src/main/java -type d -name "player" 2>/dev/null | head -1)
-if [ -z "$MAIN_DIR" ]; then
-  MAIN_DIR=$(find android/app/src/main/java -type d | tail -1)
+# 4. Java 파일 대상 디렉터리 찾기
+JAVA_DIR=$(find android/app/src/main/java -type d -name "player" 2>/dev/null | head -1)
+if [ -z "$JAVA_DIR" ]; then
+  JAVA_DIR=$(find android/app/src/main/java -type d | sort | tail -1)
 fi
-cp android-patch/MainActivity.java "$MAIN_DIR/MainActivity.java"
-echo "  MainActivity.java -> $MAIN_DIR"
+echo "  Java dir: $JAVA_DIR"
+
+# 5. MainActivity.java
+cp android-patch/MainActivity.java "$JAVA_DIR/MainActivity.java"
+echo "  MainActivity.java"
+
+# 6. RadioForegroundService.java
+cp android-patch/RadioForegroundService.java "$JAVA_DIR/RadioForegroundService.java"
+echo "  RadioForegroundService.java"
+
+# 7. media 의존성 확인 (build.gradle 에 media 없으면 추가)
+GRADLE="android/app/build.gradle"
+if ! grep -q "androidx.media:media" "$GRADLE"; then
+  sed -i "/dependencies {/a\\    implementation 'androidx.media:media:1.7.0'" "$GRADLE"
+  echo "  build.gradle: androidx.media 추가"
+fi
 
 echo ""
 echo "All patches applied."

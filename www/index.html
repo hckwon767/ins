@@ -2799,106 +2799,125 @@ if('serviceWorker' in navigator){
 </script>
 
 <script>
-// ── Capacitor 백그라운드 오디오 유지 ──────────────────────────
-// Android WebView는 화면이 꺼지면 JS 실행을 멈추고 오디오를 끊음.
-// 아래 방법들을 조합해서 백그라운드 재생을 유지함.
+(function () {
+  'use strict';
 
-(function() {
-  // 1) Wake Lock API: 화면 꺼짐 방지 (지원 기기만)
-  let wakeLock = null;
-  async function requestWakeLock() {
+  // ── 1. JS → Native 브릿지 헬퍼 ──────────────────────────────
+  // MainActivity.RadioBridge 가 주입된 경우만 호출
+  function nativeUpdate(title, artist, channel) {
     try {
-      if ('wakeLock' in navigator) {
-        wakeLock = await navigator.wakeLock.request('screen');
+      if (window.RadioBridge) {
+        window.RadioBridge.updateNowPlaying(
+          title   || 'INSTATION',
+          artist  || '',
+          channel || ''
+        );
       }
     } catch(e) {}
   }
-  document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState === 'visible') {
-      await requestWakeLock();
-    }
-  });
-  requestWakeLock();
 
-  // 2) MediaSession API: OS에 "재생 중인 미디어" 등록
-  //    → Android가 백그라운드에서도 오디오를 유지함
-  function registerMediaSession(title, artist, artUrl) {
-    if (!('mediaSession' in navigator)) return;
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title:  title  || 'INSTATION',
-      artist: artist || '',
-      artwork: artUrl ? [
-        { src: artUrl, sizes: '512x512', type: 'image/jpeg' }
-      ] : []
+  function nativeStop() {
+    try { if (window.RadioBridge) window.RadioBridge.stop(); } catch(e) {}
+  }
+
+  // ── 2. NowPlaying 업데이트 후킹 ─────────────────────────────
+  // 기존 updateNowPlayingUI 함수를 감싸서 Native 알림도 같이 갱신
+  window.addEventListener('load', () => {
+    const orig = window.updateNowPlayingUI;
+    if (typeof orig === 'function') {
+      window.updateNowPlayingUI = function(artist, title, artUrl) {
+        orig.apply(this, arguments);
+        const ch = (window._activeChannelName) || '';
+        nativeUpdate(title, artist, ch);
+        // MediaSession 메타데이터도 갱신
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title:  title  || 'INSTATION',
+            artist: artist || '',
+            artwork: artUrl ? [{ src: artUrl, sizes: '512x512', type: 'image/jpeg' }] : []
+          });
+        }
+      };
+    }
+
+    // 채널 선택 시 채널명 캡처 (알림 표시용)
+    document.querySelectorAll('[data-ch-name], .ch-name, .ch-item').forEach(el => {
+      el.addEventListener('click', () => {
+        window._activeChannelName = el.dataset.chName || el.textContent.trim().slice(0, 30);
+      });
     });
-    // 재생 컨트롤 핸들러 (잠금화면 버튼 대응)
-    const aud = document.getElementById('aud');
-    if (aud) {
-      navigator.mediaSession.setActionHandler('play',  () => { aud.play();  updateMediaSessionState(); });
-      navigator.mediaSession.setActionHandler('pause', () => { aud.pause(); updateMediaSessionState(); });
-      navigator.mediaSession.setActionHandler('stop',  () => { aud.pause(); updateMediaSessionState(); });
-    }
-  }
+  });
 
-  function updateMediaSessionState() {
-    if (!('mediaSession' in navigator)) return;
-    const aud = document.getElementById('aud');
-    if (!aud) return;
-    navigator.mediaSession.playbackState = aud.paused ? 'paused' : 'playing';
-  }
-
-  // 3) audio 엘리먼트에 이벤트 연결 (DOM 로딩 후 실행)
+  // ── 3. audio 엘리먼트 연결 ───────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
     const aud = document.getElementById('aud');
     if (!aud) return;
 
-    aud.addEventListener('play',  () => {
-      updateMediaSessionState();
-      registerMediaSession(
-        aud.dataset.title  || 'INSTATION',
-        aud.dataset.artist || '',
-        aud.dataset.artUrl || ''
-      );
-    });
-    aud.addEventListener('pause', updateMediaSessionState);
-
-    // 4) 페이지가 백그라운드로 갈 때 재생 중이면 강제 유지
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden' && !aud.paused) {
-        // 재생 중이면 아무것도 하지 않음 (pause 호출 금지)
+    // MediaSession 컨트롤 핸들러 (잠금화면 버튼)
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.setActionHandler('play',  () => {
         aud.play().catch(() => {});
-      }
-    });
-
-    // 5) 1초 간격 keepalive: Android WebView JS 스로틀링 방지
-    setInterval(() => {
-      if (!aud.paused && aud.readyState < 3) {
-        // stalled 상태면 재시작
-        const src = aud.src;
-        aud.src = src;
-        aud.play().catch(() => {});
-      }
-    }, 1000);
-  });
-
-  // 6) NowPlaying 업데이트 시 MediaSession 메타데이터 갱신
-  //    기존 코드의 updateNowPlayingUI 함수를 감싸서 실행
-  window.addEventListener('load', () => {
-    const origUpdate = window.updateNowPlayingUI;
-    if (typeof origUpdate === 'function') {
-      window.updateNowPlayingUI = function(artist, title, artUrl) {
-        origUpdate.apply(this, arguments);
-        registerMediaSession(title, artist, artUrl);
-        const aud = document.getElementById('aud');
-        if (aud) {
-          aud.dataset.title  = title  || '';
-          aud.dataset.artist = artist || '';
-          aud.dataset.artUrl = artUrl || '';
-        }
-      };
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        aud.pause();
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+        nativeStop();
+      });
+      navigator.mediaSession.setActionHandler('stop', () => {
+        aud.pause();
+        nativeStop();
+      });
     }
+
+    aud.addEventListener('play',  () => {
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+    });
+    aud.addEventListener('pause', () => {
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+    });
+
+    // ── 4. 15초 watchdog ────────────────────────────────────────
+    // currentTime 이 멈추면 (무음 stall) 스트림 재시작
+    let lastTime = -1;
+    let stallCount = 0;
+
+    setInterval(() => {
+      if (aud.paused || aud.readyState < 2) return;
+
+      if (aud.currentTime === lastTime) {
+        stallCount++;
+        if (stallCount >= 2) {
+          // 2회 연속 (30초) 멈춤 → 강제 재연결
+          stallCount = 0;
+          const src = aud.src;
+          if (src) {
+            aud.src = '';
+            aud.src = src;
+            aud.play().catch(() => {});
+          }
+        }
+      } else {
+        stallCount = 0;
+      }
+      lastTime = aud.currentTime;
+    }, 15000);
+
+    // ── 5. visibilitychange: 복귀 시 재연결만 담당 ──────────────
+    // hidden 시 아무것도 끄지 않음 (폴링/타이머 유지)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        // 복귀 시 스트림이 죽어있으면 재연결
+        if (!aud.paused && aud.readyState < 2) {
+          const src = aud.src;
+          if (src) { aud.src = src; aud.play().catch(() => {}); }
+        }
+      }
+    });
   });
+
 })();
 </script>
+
 </body>
 </html>
